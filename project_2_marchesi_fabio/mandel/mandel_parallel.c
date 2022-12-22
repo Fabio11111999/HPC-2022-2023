@@ -1,0 +1,87 @@
+#include <stdio.h>
+#include <stdlib.h>
+
+#include <sys/time.h>
+#include <time.h>
+#include <unistd.h>
+
+#include "consts.h"
+#include "pngwriter.h"
+
+#include <omp.h>
+
+unsigned long get_time() {
+  struct timeval tp;
+  gettimeofday(&tp, NULL);
+  return tp.tv_sec * 1000000 + tp.tv_usec;
+}
+
+int main(int argc, char **argv) {
+  png_data *pPng = png_create(IMAGE_WIDTH, IMAGE_HEIGHT);
+
+  double x, y, x2, y2, cx, cy;
+  cy = MIN_Y;
+
+  double fDeltaX = (MAX_X - MIN_X) / (double)IMAGE_WIDTH;
+  double fDeltaY = (MAX_Y - MIN_Y) / (double)IMAGE_HEIGHT;
+
+  long nTotalIterationsCount = 0;
+  unsigned long nTimeStart = get_time();
+
+  long n;
+  long long i = 0, j = 0;
+
+  n = 0;
+  // do the calculation
+#pragma omp parallel private(i, j, n, cx, cy, x2, y2)
+{
+  long my_iterations = 0;
+#pragma omp for
+  for (j = 0; j < IMAGE_HEIGHT; j++) {
+    cx = MIN_X;
+	cy = MIN_Y + j * fDeltaY; // this multiplication approxximate in a different way so it does fewer iterations
+    for (i = 0; i < IMAGE_WIDTH; i++) {
+      n = 0;
+      x2 = 0.0, y2 = 0.0;
+      while (x2 * x2 + y2 * y2 <= 2 * 2 && n < MAX_ITERS) {
+        double xtemp = x2 * x2 - y2 * y2 + cx;
+        y2 = 2 * x2 * y2 + cy;
+        x2 = xtemp;
+        n++;
+      }
+      my_iterations += n;
+      int c = ((long)n * 255) / MAX_ITERS;
+      png_plot(pPng, i, j, c, c, c);
+      cx += fDeltaX;
+    }
+  }
+#pragma omp critical
+  nTotalIterationsCount += my_iterations;
+}
+  unsigned long nTimeEnd = get_time();
+
+  int print_all = 1;
+  if (print_all) {
+	  // print benchmark data
+	  printf("Total time:                 %g millisconds\n",
+			 (nTimeEnd - nTimeStart) / 1000.0);
+	  printf("Image size:                 %ld x %ld = %ld Pixels\n",
+			 (long)IMAGE_WIDTH, (long)IMAGE_HEIGHT,
+			 (long)(IMAGE_WIDTH * IMAGE_HEIGHT));
+	  printf("Total number of iterations: %ld\n", nTotalIterationsCount);
+	  printf("Avg. time per pixel:        %g microseconds\n",
+			 (nTimeEnd - nTimeStart) / (double)(IMAGE_WIDTH * IMAGE_HEIGHT));
+	  printf("Avg. time per iteration:    %g microseconds\n",
+			 (nTimeEnd - nTimeStart) / (double)nTotalIterationsCount);
+	  printf("Iterations/second:          %g\n",
+			 nTotalIterationsCount / (double)(nTimeEnd - nTimeStart) * 1e6);
+	  // assume there are 8 floating point operations per iteration
+	  printf("MFlop/s:                    %g\n",
+			 nTotalIterationsCount * 8.0 / (double)(nTimeEnd - nTimeStart));
+  } else {
+	  printf("%g ", (nTimeEnd - nTimeStart) / 1000.0);
+	  printf("%g\n", nTotalIterationsCount * 8.0 / (double)(nTimeEnd - nTimeStart));
+  }
+  png_write(pPng, "mandel.png");
+  return 0;
+}
